@@ -126,7 +126,7 @@ sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 "$OPENSSL_BIN" s_server -help 2>&1 | gr
 
 ### 2.4. Интерфейс для `tc` и команда `ip route get`
 
-**Зачем это нужно.** Правило `tc qdisc … dev ИМЯ_IFACE` вешается на **локальный сетевой интерфейс Linux на VPS** (например `eth0`, `ens3`). Через него уходит ответный трафик к клиентам в Интернете.
+**Зачем это нужно.** Правило `tc qdisc … dev ens3` вешается на **локальный сетевой интерфейс Linux на VPS** (например `eth0`, `ens3`). Через него уходит ответный трафик к клиентам в Интернете.
 
 **Что делает `ip route get АДРЕС`.** Показывает, **через какой интерфейс и шлюз** ядро отправит пакет к указанному IP. Это способ узнать **`dev`** для вашего случая.
 
@@ -140,31 +140,31 @@ ip route show default
 ip route get 8.8.8.8
 ```
 
-В строке будет что‑то вроде `dev eth0 src …` — **`eth0`** и есть кандидат на **`ИМЯ_IFACE`** для `tc`. Если есть несколько интерфейсов — берите тот, через который реально уходит трафик к вашему тестовому клиенту (часто совпадает с интерфейсом по умолчанию).
+В строке будет что‑то вроде `dev eth0 src …` — **`eth0`** и есть кандидат на **`ens3`** для `tc`. Если есть несколько интерфейсов — берите тот, через который реально уходит трафик к вашему тестовому клиенту (часто совпадает с интерфейсом по умолчанию).
 
 Перед режимами **A и B** правило задержки **не нужно**, его быть не должно. Проверка:
 
 ```bash
-tc qdisc show dev ИМЯ_IFACE
+tc qdisc show dev ens3
 ```
 
 Если там уже есть `netem` от прошлых прогонов — снимите:
 
 ```bash
-sudo tc qdisc del dev ИМЯ_IFACE root netem
+sudo tc qdisc del dev ens3 root netem
 ```
 
 Для режимов **C и D** включите задержку **до** запуска `s_server` и **до** замеров:
 
 ```bash
-sudo tc qdisc add dev ИМЯ_IFACE root netem delay 50ms
-tc qdisc show dev ИМЯ_IFACE
+sudo tc qdisc add dev ens3 root netem delay 50ms
+tc qdisc show dev ens3
 ```
 
 После того как закончили замеры для этой ячейки (и остановили `s_server`), **обязательно** снимите `tc`, чтобы следующая ячейка (A или B) не измерялась «с хвостом» задержки:
 
 ```bash
-sudo tc qdisc del dev ИМЯ_IFACE root netem
+sudo tc qdisc del dev ens3 root netem
 ```
 
 **Итого по `tc`:** включили только перед **C/D**, выключили сразу после **C/D**. Для **A/B** — всегда без `tc`.
@@ -511,7 +511,7 @@ echo | openssl s_client -connect ideco.theworkpc.com:443 -tls1_3 \
 ### tcpdump
 
 ```bash
-sudo tcpdump -i ИМЯ_IFACE port 443 -w upstream.pcap
+sudo tcpdump -i ens3 port 443 -w upstream.pcap
 ```
 
 В Wireshark в ClientHello — расширение **compress_certificate** (тип 27).
