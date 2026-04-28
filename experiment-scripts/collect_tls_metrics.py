@@ -68,6 +68,8 @@ def collect_series(
     delay_ms: int,
     insecure_k: bool,
     stderr_log: str | Path | None = None,
+    *,
+    progress_every: int = 0,
 ) -> None:
     """Пишет один CSV с серией замеров (формат совместим с analyze_tls_results.py)."""
     output = Path(output)
@@ -105,6 +107,9 @@ def collect_series(
             }
             w.writerow(row)
             f.flush()
+
+            if progress_every and (i == 1 or i == runs or i % progress_every == 0):
+                print(f"  curl progress: {i}/{runs}", file=sys.stderr, flush=True)
 
             if sleep_ms > 0 and i < runs:
                 time.sleep(sleep_ms / 1000.0)

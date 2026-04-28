@@ -75,6 +75,28 @@ python3 collect_tls_abcd.py \
 
 Флаг **`--yes`** — без пауз Enter (только для отладки; конфигурация VPS должна подходить ко всем режимам сама по себе).
 
+## Полная автоматизация по SSH (`orchestrate_remote.py`)
+
+Пошагово для ALT: **[ALT-LINUX-RUN.md](ALT-LINUX-RUN.md)** — какие файлы скопировать и как запустить.
+
+Рядом со скриптом лежит **`remote_config.json`** (ваши хосты и пути); при необходимости отредактируйте только его.
+
+Поведение скрипта:
+
+1. SSH на **VPS** — старый `s_server`, `tc`, новый `openssl s_server` под фазу **A/B/C/D**.
+2. Опционально SSH на **Ideco** — один `openssl s_client -trace` → `{chain}_{letter}_ideco_trace.txt`.
+3. Локально — серия **curl** (`collect_series`), прогресс в консоль каждые **`curl_progress_every`** запросов из конфига.
+4. SSH на **VPS** — teardown.
+
+Флаги: **`--dry-run`**, **`--quiet`** (минимум текста), **`--dump-remote-scripts`** (печатать полный bash для VPS).
+
+```bash
+python3 orchestrate_remote.py -c remote_config.json
+python3 orchestrate_remote.py --dry-run
+```
+
+Если на Ideco по SSH нет нормального `openssl`, задайте **`"run_ideco_trace": false`** в JSON.
+
 ## Анализ и графики (`analyze_tls_results.py`)
 
 Объединяет один или несколько CSV и строит сводную таблицу + boxplot.

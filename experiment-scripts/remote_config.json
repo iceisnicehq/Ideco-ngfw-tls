@@ -1,0 +1,34 @@
+{
+  "vps_ssh": "root@ideco.theworkpc.com",
+  "ssh_extra_args": ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"],
+
+  "ideco_ssh": "admin@10.0.10.1",
+  "run_ideco_trace": true,
+  "ideco_trace_host_port": "ideco.theworkpc.com:443",
+  "ideco_openssl": "openssl",
+
+  "https_url": "https://ideco.theworkpc.com/",
+  "metrics_output_dir": "../runs",
+  "runs_per_phase": 100,
+  "sleep_ms": 100,
+  "curl_progress_every": 25,
+  "insecure_k": true,
+
+  "tc_iface": null,
+
+  "vps": {
+    "openssl_bin": "/root/openssl-3.3.0/apps/openssl",
+    "ld_library_path": "/root/openssl-3.3.0",
+    "cert_dir": "/root/sossu_kurs/certs",
+    "leaf_cert": "leaf.crt",
+    "leaf_key": "leaf.key",
+    "chain_files": {
+      "small": "extra_small.crt",
+      "medium": "extra_medium.crt",
+      "large": "extra_large.crt"
+    }
+  },
+
+  "chains_to_run": ["small"],
+  "dry_run": false
+}
