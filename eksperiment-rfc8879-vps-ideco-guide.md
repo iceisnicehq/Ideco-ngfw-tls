@@ -39,7 +39,7 @@
 1. **Утяжеление цепочки** повторением одного и того же `int.crt` в `extra_*.crt` — **искусственное увеличение объёма байт**, не модель корректной PKIX в продакшене. Укажите это в отчёте.
 2. При смене `-cert_chain` или режима `-cert_comp` **перезапускайте** `openssl s_server`.
 3. Правила `tc` **не сохраняются** после перезагрузки VPS — снимайте и добавляйте между этапами.
-4. Зафиксируйте версии: OpenSSL на VPS (`openssl version -a`), `curl --version` и OpenSSL на Ideco.
+4. Зафиксируйте версии: OpenSSL на VPS (`openssl version -a`), на машине замеров — `curl --version` и OpenSSL (ALT и/или консоль Ideco, где запускаете скрипт и `s_client`).
 
 ---
 
@@ -124,28 +124,50 @@ sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 "$OPENSSL_BIN" s_server -help 2>&1 | gr
 
 - **`-cert_comp`** — включение сжатия сертификата на сервере; алгоритм (в т.ч. zlib) согласуется по RFC 8879. **Не** подставляйте отдельным токеном `brotli` после `-cert_comp` — в вашей сборке будет `Extra option: "brotli"`. Запись **`[-cert_comp zlib]`** в старых текстах — условное «опционально в квадратных скобках» в markdown, **не** буквальная команда shell.
 
-### 2.4. Эмуляция задержки на VPS (`tc`) — до режимов C и D
+### 2.4. Интерфейс для `tc` и команда `ip route get`
 
-Узнайте интерфейс в сторону клиента Ideco:
+**Зачем это нужно.** Правило `tc qdisc … dev ИМЯ_IFACE` вешается на **локальный сетевой интерфейс Linux на VPS** (например `eth0`, `ens3`). Через него уходит ответный трафик к клиентам в Интернете.
+
+**Что делает `ip route get АДРЕС`.** Показывает, **через какой интерфейс и шлюз** ядро отправит пакет к указанному IP. Это способ узнать **`dev`** для вашего случая.
+
+**Если Ideco в VirtualBox (bridged), клиент за NAT.** Для VPS ваш браузер/Ideco всё равно видны как соединение с **публичного IP вашего роутера**; частный адрес ВМ до VPS не доходит. На VPS это не ломает выбор интерфейса: исходящий интернет‑интерфейс VPS обычно один и тот же (часто тот же, что и для `default`‑маршрута).
+
+Примеры на VPS:
 
 ```bash
-ip -br a
-# или
-ip route get ИЗВЕСТНЫЙ_IP_IDECO_WAN
+ip -br link show
+ip route show default
+ip route get 8.8.8.8
 ```
 
-Включить **50 ms** (нужно для C и D):
+В строке будет что‑то вроде `dev eth0 src …` — **`eth0`** и есть кандидат на **`ИМЯ_IFACE`** для `tc`. Если есть несколько интерфейсов — берите тот, через который реально уходит трафик к вашему тестовому клиенту (часто совпадает с интерфейсом по умолчанию).
+
+Перед режимами **A и B** правило задержки **не нужно**, его быть не должно. Проверка:
+
+```bash
+tc qdisc show dev ИМЯ_IFACE
+```
+
+Если там уже есть `netem` от прошлых прогонов — снимите:
+
+```bash
+sudo tc qdisc del dev ИМЯ_IFACE root netem
+```
+
+Для режимов **C и D** включите задержку **до** запуска `s_server` и **до** замеров:
 
 ```bash
 sudo tc qdisc add dev ИМЯ_IFACE root netem delay 50ms
 tc qdisc show dev ИМЯ_IFACE
 ```
 
-Выключить после этапа замеров:
+После того как закончили замеры для этой ячейки (и остановили `s_server`), **обязательно** снимите `tc`, чтобы следующая ячейка (A или B) не измерялась «с хвостом» задержки:
 
 ```bash
 sudo tc qdisc del dev ИМЯ_IFACE root netem
 ```
+
+**Итого по `tc`:** включили только перед **C/D**, выключили сразу после **C/D**. Для **A/B** — всегда без `tc`.
 
 ---
 
@@ -219,43 +241,211 @@ sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_serv
 
 ---
 
-### 2.6. Средняя цепочка
+### 2.6. Полные команды: средняя цепочка (`extra_medium.crt`)
 
-Те же режимы **A–D**; во всех командах замените одну строку на:
+Отличие от §2.5 только в строке `-cert_chain`.
 
-```text
--cert_chain /root/sossu_kurs/certs/extra_medium.crt
-```
-
----
-
-### 2.7. Тяжёлая цепочка
-
-Те же режимы **A–D**; замените на:
-
-```text
--cert_chain /root/sossu_kurs/certs/extra_large.crt
-```
-
----
-
-### 2.8. Оценка коэффициента сжатия (опционально, таблица 1 в курсовой)
+#### Режим A — без сжатия, без `tc`
 
 ```bash
-echo | openssl s_client -connect ideco.theworkpc.com:443 -tls1_3 -servername ideco.theworkpc.com -trace 2>&1 | grep -iE 'Certificate|CompressedCertificate'
+cd /root/sossu_kurs/certs/
+sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
+  -accept 443 \
+  -cert /root/sossu_kurs/certs/leaf.crt \
+  -key /root/sossu_kurs/certs/int.key \
+  -cert_chain /root/sossu_kurs/certs/extra_medium.crt \
+  -tls1_3 \
+  -www -quiet
 ```
 
-Для точных размеров байт удобнее одна запись в Wireshark по `tcpdump`.
+#### Режим B — с `-cert_comp`, без `tc`
+
+```bash
+cd /root/sossu_kurs/certs/
+sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
+  -accept 443 \
+  -cert /root/sossu_kurs/certs/leaf.crt \
+  -key /root/sossu_kurs/certs/int.key \
+  -cert_chain /root/sossu_kurs/certs/extra_medium.crt \
+  -tls1_3 \
+  -cert_comp \
+  -www -quiet
+```
+
+#### Режим C — без сжатия, с `tc` 50 ms
+
+Сначала включить `tc` (п. 2.4), затем сервер:
+
+```bash
+cd /root/sossu_kurs/certs/
+sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
+  -accept 443 \
+  -cert /root/sossu_kurs/certs/leaf.crt \
+  -key /root/sossu_kurs/certs/int.key \
+  -cert_chain /root/sossu_kurs/certs/extra_medium.crt \
+  -tls1_3 \
+  -www -quiet
+```
+
+После замеров — снять `tc`.
+
+#### Режим D — с `-cert_comp`, с `tc` 50 ms
+
+Сначала включить `tc`, затем сервер:
+
+```bash
+cd /root/sossu_kurs/certs/
+sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
+  -accept 443 \
+  -cert /root/sossu_kurs/certs/leaf.crt \
+  -key /root/sossu_kurs/certs/int.key \
+  -cert_chain /root/sossu_kurs/certs/extra_medium.crt \
+  -tls1_3 \
+  -cert_comp \
+  -www -quiet
+```
+
+После замеров — снять `tc`.
 
 ---
 
-## Этап 3: Клиент Ideco NGFW — метрики
+### 2.7. Полные команды: тяжёлая цепочка (`extra_large.crt`)
 
-HTTPS к вашему хосту (или IP с `-k`).
+Те же режимы **A–D**; во всех блоках ниже используется `-cert_chain …/extra_large.crt`.
 
-Предпочтительно один раз разогреть DNS или использовать IP в URL, чтобы не смешивать с метрикой TLS.
+#### Режим A — без сжатия, без `tc`
 
-Пример цикла вручную (для финальной статистики лучше скрипт на **250** прогонов):
+```bash
+cd /root/sossu_kurs/certs/
+sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
+  -accept 443 \
+  -cert /root/sossu_kurs/certs/leaf.crt \
+  -key /root/sossu_kurs/certs/int.key \
+  -cert_chain /root/sossu_kurs/certs/extra_large.crt \
+  -tls1_3 \
+  -www -quiet
+```
+
+#### Режим B — с `-cert_comp`, без `tc`
+
+```bash
+cd /root/sossu_kurs/certs/
+sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
+  -accept 443 \
+  -cert /root/sossu_kurs/certs/leaf.crt \
+  -key /root/sossu_kurs/certs/int.key \
+  -cert_chain /root/sossu_kurs/certs/extra_large.crt \
+  -tls1_3 \
+  -cert_comp \
+  -www -quiet
+```
+
+#### Режим C — без сжатия, с `tc` 50 ms
+
+Сначала включить `tc`, затем сервер:
+
+```bash
+cd /root/sossu_kurs/certs/
+sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
+  -accept 443 \
+  -cert /root/sossu_kurs/certs/leaf.crt \
+  -key /root/sossu_kurs/certs/int.key \
+  -cert_chain /root/sossu_kurs/certs/extra_large.crt \
+  -tls1_3 \
+  -www -quiet
+```
+
+После замеров — снять `tc`.
+
+#### Режим D — с `-cert_comp`, с `tc` 50 ms
+
+Сначала включить `tc`, затем сервер:
+
+```bash
+cd /root/sossu_kurs/certs/
+sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
+  -accept 443 \
+  -cert /root/sossu_kurs/certs/leaf.crt \
+  -key /root/sossu_kurs/certs/int.key \
+  -cert_chain /root/sossu_kurs/certs/extra_large.crt \
+  -tls1_3 \
+  -cert_comp \
+  -www -quiet
+```
+
+После замеров — снять `tc`.
+
+---
+
+### 2.8. Одна ячейка матрицы: порядок действий (строго по шагам)
+
+Цель ячейки: при зафиксированном режиме сервера (**A**, **B**, **C** или **D**) и размере цепочки (**small** / **medium** / **large**) собрать **250** строк CSV замеров и при необходимости один раз посмотреть trace для таблицы сжатия.
+
+Выполняйте на **цепочке от режима A для данного размера цепочки к D**, каждый раз целиком ниже.
+
+| Шаг | Где | Действие |
+|-----|-----|----------|
+| **1** | **VPS** | Для режимов **A** и **B**: убедиться, что **`tc` выключен** (`tc qdisc del …`, см. п. 2.4). Для **C** и **D**: **включить** `tc netem delay 50 ms` на нужном интерфейсе. |
+| **2** | **VPS** | Запустить ровно ту команду `s_server`, которая соответствует текущей ячейке (§2.5 / §2.6 / §2.7). Оставить процесс работать. |
+| **3** | **Ideco NGFW** (консоль с `openssl`) | Один раз выполнить проверку типа сообщения и строк для таблицы сжатия (ниже — пример). Это **не** замена **250** прогонам; только контроль для отчёта. |
+| **4** | **ALT** (или другая машина с Python/`curl`, откуда реально ходите HTTPS через политику Ideco к VPS) | Запустить **`collect_tls_metrics.py`** на **250** прогонов с правильными `--chain`, `--compression`, `--delay-ms` и именем CSV (см. этап 3). |
+| **5** | **VPS** | Остановить `s_server` (Ctrl+C). |
+| **6** | **VPS** | Если ячейка была **C** или **D** — **снять** `tc` (`tc qdisc del …`), прежде чем переходить к ячейке **без** задержки. |
+
+**Проверка на Ideco NGFW (один раз на ячейку, пока работает нужный `s_server`):**
+
+```bash
+echo | openssl s_client -connect ideco.theworkpc.com:443 -tls1_3 -trace 2>&1 \
+  | grep -A 3 -iE "CompressedCertificate|Certificate, Length"
+```
+
+Подставьте своё имя хоста. При ошибке сертификата добавьте при необходимости `-servername ideco.theworkpc.com` и/или проверку в духе `-verify_return_error` по ситуации; для учебного стенда иногда нужен `-k` на стороне `curl`, для `s_client` — доверенный CA или явная политика проверки.
+
+Для чисел в **таблицу 1** курсовой точнее смотреть размеры в **Wireshark** по дампу (`tcpdump` на VPS), если нужны байты «на проводе».
+
+---
+
+### 2.9. Кратко: зачем был раздел «Этап 4» раньше
+
+Раньше повтор при `tc` выносился отдельным блоком и создавал впечатление «сначала выключить tc, потом замерять». По методике всё проще: **для каждой ячейки C или D** вы включаете `tc` перед сервером и замерами и **снимаете сразу после** этой ячейки (шаги 1 и 6 выше). Отдельного «глобального» этапа не нужно.
+
+---
+
+## Этап 3: Замеры времени TLS на ALT (скрипт `collect_tls_metrics.py`)
+
+HTTPS запросы должны идти на ваш тестовый хост (**например** `https://ideco.theworkpc.com/`) так же, как в эксперименте: с клиента за Ideco NGFW, чтобы совпадали инспекция TLS и политика.
+
+Подставьте путь к репозиторию на ALT и свой URL:
+
+```bash
+cd /путь/к/Ideco-NGFW-tls/experiment-scripts
+python3 collect_tls_metrics.py \
+  --url "https://ideco.theworkpc.com/" \
+  --runs 250 \
+  --sleep-ms 150 \
+  --chain small \
+  --compression off \
+  --delay-ms 0 \
+  --insecure-k \
+  --output ../runs/small_A_off_delay0.csv \
+  --stderr-log ../runs/small_A_off_delay0.err.log
+```
+
+- Параметры `--chain` (`small` / `medium` / `large`), `--compression` (`off` или `zlib` — метка того, что на VPS был режим без или с `-cert_comp`) и `--delay-ms` (`0` или `50`) должны **совпадать** с тем, что реально включено на VPS в этой ячейке.  
+- **`--delay-ms`** только **подпись в CSV**; реальную задержку включаете на VPS через `tc` (п. 2.4).
+
+Примеры имён файлов при той же нумерации, что режимы **A–D**:
+
+| Ячейка | Пример имени CSV | Заметки к параметрам скрипта |
+|--------|------------------|--------------------------------|
+| Small, A | `small_A_off_delay0.csv` | `--compression off`, `--delay-ms 0` |
+| Small, B | `small_B_zlib_delay0.csv` | `--compression zlib`, `--delay-ms 0` |
+| Small, C | `small_C_off_delay50.csv` | `--compression off`, `--delay-ms 50`, на VPS `tc` включён |
+| Small, D | `small_D_zlib_delay50.csv` | `--compression zlib`, `--delay-ms 50`, на VPS `tc` включён |
+
+Для **medium** и **large** меняйте префикс (`medium_…`, `large_…`) и `--chain`.
+
+Ручной цикл на 250 запросов (если без Python), с ALT:
 
 ```bash
 for i in $(seq 1 250); do
@@ -264,42 +454,14 @@ for i in $(seq 1 250); do
 done
 ```
 
-Скрипт (из каталога репозитория на машине с Python и `curl`):
+Обработка после сбора всех CSV:
 
 ```bash
 cd experiment-scripts
-python3 collect_tls_metrics.py --url "https://IDE_IP_OR_NAME/" --runs 250 --sleep-ms 150 \
-  --chain large --compression off --delay-ms 0 \
-  --output ../runs/large_off_delay0.csv \
-  --stderr-log ../runs/large_off_delay0.err.log
-```
-
-Повторите для каждой комбинации `chain` × `compression` × `delay_ms`. Параметры `--delay-ms` и `--chain` — **метки в CSV**; реальную задержку на VPS включаете вручную (как в этапе 2).
-
-Примеры имён файлов:
-
-- Режим A, small, без задержки: `small_A_off_delay0.csv`
-- Режим B: `--compression zlib` (метка: на сервере был `-cert_comp`), например `small_B_zlib_delay0.csv`
-- Режим C: `--delay-ms 50`, сервер без `-cert_comp`, `small_C_off_delay50.csv`
-- Режим D: `--delay-ms 50`, `--compression zlib`, `small_D_zlib_delay50.csv`
-
-Обработка:
-
-```bash
 python3 analyze_tls_results.py ../runs/*.csv --output-dir ../figures --summary summary.csv
 ```
 
----
-
-## Этап 4: Повтор при включённом `tc`
-
-Если этап 3 уже выполнен без задержки, на VPS включите **`tc`** (п. 2.4), оставьте те же режимы `s_server`, выполните ещё **250** замеров на ячейку с меткой `delay_ms=50`.
-
-Не забудьте снять `tc` после тестов:
-
-```bash
-sudo tc qdisc del dev ИМЯ_IFACE root netem
-```
+Предпочтительно один раз «разогреть» DNS или зафиксировать IP в `/etc/hosts` на ALT, чтобы не смешивать в выборке задержки резолва.
 
 ---
 
@@ -336,6 +498,8 @@ curl -v -k https://ваш-ip-или-хост 2>&1 | grep -i "issuer"
 
 ### Клиент с `-cert_comp` и trace
 
+Для разового контроля при сборе метрик см. строку trace в §**2.8** (Ideco NGFW). Дополнительно с машины с OpenSSL:
+
 ```bash
 echo | openssl s_client -connect ideco.theworkpc.com:443 -tls1_3 \
   -cert_comp \
@@ -364,11 +528,9 @@ sudo tcpdump -i ИМЯ_IFACE port 443 -w upstream.pcap
 
 ## Краткий чеклист матрицы
 
-1. Сервер **off**, chain **small**, **tc выкл** → **250** замеров → CSV  
-2. Сервер с **`-cert_comp`**, chain **small**, **tc выкл** → **250** замеров  
-3. Повторить для **medium**, **large** при **tc выкл**  
-4. Включить **tc 50 ms**, повторить все **6** комбинаций цепочка × сжатие (каждая × **250**)  
-5. Объединить CSV → `analyze_tls_results.py` → таблицы и `figures/*.png`
+1. На каждую из **12** ячеек (3 цепочки × 4 режима **A–D**) выполняйте подряд шаги **1–6** из §**2.8**: VPS (`tc` только для **C/D**) → один раз trace на **Ideco** → **250** замеров скриптом на **ALT** → остановка `s_server` → для **C/D** снять `tc`.  
+2. Удобный порядок: для **extra_small** пройти **A → B → C → D**, затем то же для **extra_medium**, затем для **extra_large**.  
+3. В конце всех CSV — **`analyze_tls_results.py`** → таблицы и `figures/*.png`.
 
 ---
 
