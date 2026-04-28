@@ -55,7 +55,7 @@
 
 ### 1.1. Генерация базовых ключей и сертификатов (RSA 4096)
 
-Если файлы уже есть (в т.ч. `leaf.crt`, `int.key`) — генерацию не повторяйте.
+Если файлы уже есть (в т.ч. `leaf.crt`, **`leaf.key`** — ключ именно к конечному сертификату) — генерацию не повторяйте.
 
 ```bash
 mkdir -p /root/sossu_kurs/certs/
@@ -117,7 +117,7 @@ sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 "$OPENSSL_BIN" s_server -help 2>&1 | gr
 ### 2.3. Смысл аргументов `openssl s_server`
 
 - **`-cert`** — PEM конечного (серверного) сертификата.
-- **`-key`** — закрытый ключ **этого** конечного сертификата (должен быть парой к `-cert`). В примерах ниже: `leaf.crt` и `int.key` — как на вашем стенде; при смене PKI обновите оба согласованно.
+- **`-key`** — закрытый ключ **этого** конечного сертификата (должен быть парой к `-cert`). Для **`leaf.crt`** это **`leaf.key`** (ключ, которым подписывался CSR leaf). **`int.key`** — ключ промежуточного УЦ; он подходит к **`int.crt`**, но **не** к `leaf.crt`, иначе OpenSSL выдаст `key values mismatch`.
 - **`-cert_chain`** — PEM с **дополнительными** сертификатами (обычно промежуточные УЦ), которые сервер шлёт **после** leaf. Здесь — `extra_*.crt` с утяжелённым содержимым для эксперимента.
 
 Три аргумента **не дублируют** друг друга: конечный сертификат + ключ отдельно, «хвост» цепочки — в `-cert_chain`.
@@ -182,7 +182,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_small.crt \
   -tls1_3 \
   -www -quiet
@@ -195,7 +195,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_small.crt \
   -tls1_3 \
   -cert_comp \
@@ -211,7 +211,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_small.crt \
   -tls1_3 \
   -www -quiet
@@ -228,7 +228,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_small.crt \
   -tls1_3 \
   -cert_comp \
@@ -252,7 +252,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_medium.crt \
   -tls1_3 \
   -www -quiet
@@ -265,7 +265,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_medium.crt \
   -tls1_3 \
   -cert_comp \
@@ -281,7 +281,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_medium.crt \
   -tls1_3 \
   -www -quiet
@@ -298,7 +298,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_medium.crt \
   -tls1_3 \
   -cert_comp \
@@ -320,7 +320,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_large.crt \
   -tls1_3 \
   -www -quiet
@@ -333,7 +333,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_large.crt \
   -tls1_3 \
   -cert_comp \
@@ -349,7 +349,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_large.crt \
   -tls1_3 \
   -www -quiet
@@ -366,7 +366,7 @@ cd /root/sossu_kurs/certs/
 sudo LD_LIBRARY_PATH=/root/openssl-3.3.0 /root/openssl-3.3.0/apps/openssl s_server \
   -accept 443 \
   -cert /root/sossu_kurs/certs/leaf.crt \
-  -key /root/sossu_kurs/certs/int.key \
+  -key /root/sossu_kurs/certs/leaf.key \
   -cert_chain /root/sossu_kurs/certs/extra_large.crt \
   -tls1_3 \
   -cert_comp \

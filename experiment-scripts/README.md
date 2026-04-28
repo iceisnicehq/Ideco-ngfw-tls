@@ -54,6 +54,27 @@ python3 collect_tls_metrics.py \
 
 Метрика: **`tls_handshake_ms`** ≈ время TLS после установления TCP (`time_appconnect − time_connect`).
 
+## Интерактивный проход A–D (`collect_tls_abcd.py`)
+
+Один запуск — одна цепочка (`small` / `medium` / `large`): подряд записываются четыре CSV (режимы A→B→C→D). Между режимами скрипт ждёт **Enter**, чтобы вы успели переключить `s_server` и `tc` на VPS.
+
+По умолчанию: **100** запросов на режим, пауза **100** мс между запросами.
+
+Запускать из каталога `experiment-scripts` (чтобы находился модуль `collect_tls_metrics`):
+
+```bash
+cd experiment-scripts
+python3 collect_tls_abcd.py \
+  --url "https://ideco.theworkpc.com/" \
+  --chain small \
+  --insecure-k \
+  --output-dir ../runs
+```
+
+Файлы: `{chain}_A_off_delay0.csv`, `{chain}_B_zlib_delay0.csv`, `{chain}_C_off_delay50.csv`, `{chain}_D_zlib_delay50.csv` и рядом `.err.log`.
+
+Флаг **`--yes`** — без пауз Enter (только для отладки; конфигурация VPS должна подходить ко всем режимам сама по себе).
+
 ## Анализ и графики (`analyze_tls_results.py`)
 
 Объединяет один или несколько CSV и строит сводную таблицу + boxplot.
