@@ -368,7 +368,7 @@ echo started mpstat -> {remote_mp}
         dump_start = f"""set -euo pipefail
 mkdir -p {shlex.quote(remote_base)}
 rm -f {shlex.quote(pcap_rel)}
-nohup tcpdump -i {shlex.quote(iface)} -U -w {shlex.quote(pcap_rel)} port 443 > /tmp/tcpdump_{cid}.log 2>&1 &
+nohup tcpdump -i {shlex.quote(iface)} -s 0 -U -w {shlex.quote(pcap_rel)} port 443 > /tmp/tcpdump_{cid}.log 2>&1 &
 echo $! > /tmp/tcpdump_{cid}.pid
 """
         default_hey = str((cfg.get("load") or {}).get("hey_bin") or "hey")
@@ -559,7 +559,11 @@ sleep 1
             n = sum(1 for _ in f) - 1
         if n < 1:
             raise RuntimeError(
-                f"В {out_csv} нет измеренных рукопожатий (tshark). Проверьте pcap и SNI/HTTPS."
+                f"В {out_csv} нет измеренных рукопожатий (tshark). "
+                f"Клиент {cd['id']} client_ip={cd['cip']!r}, pcap={lp}. "
+                "Проверьте: в дампе SYN с этого IP на :443 и есть TLS Application Data (тип 23) с сервера; "
+                f"ручной разбор: tshark -r {lp} -Y \"tcp.port==443 && tls.record.content_type==23\" -c 3. "
+                "Если пусто — урезанные кадры (оркестратор теперь пишет tcpdump -s 0; переснимите фазу)."
             )
 
 

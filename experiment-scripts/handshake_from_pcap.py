@@ -40,6 +40,13 @@ OUT_COLUMNS = [
 ]
 
 
+def _norm_ip(s: str) -> str:
+    x = s.strip()
+    if x.startswith("::ffff:") and "." in x:
+        return x[7:]
+    return x
+
+
 def _run_tshark_fields(
     pcap: Path,
     *,
@@ -59,6 +66,8 @@ def _run_tshark_fields(
         "tcp.stream",
         "-e",
         "ip.src",
+        "-e",
+        "ipv6.src",
         "-e",
         "tcp.srcport",
         "-e",
@@ -102,26 +111,27 @@ def handshake_rows_from_tshark(
     syn_time: dict[int, float] = {}
     appdata_time: dict[int, float] = {}
 
+    cn = _norm_ip(client_ip)
     for parts in raw:
-        if len(parts) < 8:
-            parts.extend([""] * (8 - len(parts)))
+        if len(parts) < 9:
+            parts.extend([""] * (9 - len(parts)))
         try:
             t = float(parts[0])
             stream = int(parts[1])
-            ip_src = parts[2].strip()
-            srcport = parts[3].strip()
-            dstport = parts[4].strip()
-            syn = parts[5].strip() in ("1", "True", "true")
-            ack = parts[6].strip() in ("1", "True", "true")
-            ctype = parts[7].strip()
+            ip_src = _norm_ip(parts[2] or parts[3])
+            srcport = parts[4].strip()
+            dstport = parts[5].strip()
+            syn = parts[6].strip() in ("1", "True", "true")
+            ack = parts[7].strip() in ("1", "True", "true")
+            ctype = parts[8].strip()
         except (ValueError, IndexError):
             continue
 
-        if dstport == "443" and syn and not ack and ip_src == client_ip:
+        if dstport == "443" and syn and not ack and ip_src == cn:
             if stream not in syn_time:
                 syn_time[stream] = t
 
-        if srcport == "443" and ip_src != client_ip and ctype == "23":
+        if srcport == "443" and ip_src != cn and ctype == "23":
             if stream not in appdata_time:
                 appdata_time[stream] = t
 
