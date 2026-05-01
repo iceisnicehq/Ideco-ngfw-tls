@@ -145,7 +145,17 @@ def install_trusted_leaf_on_clients(cfg: dict[str, Any], ssh_ex: list[str]) -> N
         cat_cmd = ["ssh", *ssh_ex, *sk, target, "cat", remote_leaf]
         env_srv = os.environ.copy()
     log("[trust] fetch leaf.crt с сервера")
-    r = subprocess.run(cat_cmd, env=env_srv, capture_output=True, check=True)
+    r = subprocess.run(cat_cmd, env=env_srv, capture_output=True, check=False)
+    if r.returncode != 0:
+        err = (r.stderr or b"").decode("utf-8", "replace").strip()
+        hint = (
+            "На сервере оркестратор не создаёт сертификаты: один раз выполните на TLS-сервере "
+            "`bash lab_setup_server_certs.sh --dir ... --fqdn ideco.local` (см. LAB-ideco-wrk-tshark.md). "
+            f"Проверьте SSH к {target} и наличие файла {remote_leaf}."
+        )
+        raise RuntimeError(
+            f"[trust] ssh cat {remote_leaf} завершился с кодом {r.returncode}. {err}\n{hint}"
+        )
     pem_bytes = r.stdout
     if not pem_bytes.strip():
         raise RuntimeError("[trust] пустой leaf с сервера — проверьте пути и сертификат")
@@ -155,13 +165,26 @@ def install_trusted_leaf_on_clients(cfg: dict[str, Any], ssh_ex: list[str]) -> N
         b64 = base64.b64encode(pem_bytes).decode("ascii")
         install_script = f"""set -euo pipefail
 umask 022
-echo {shlex.quote(b64)} | base64 -d > /usr/local/share/ca-certificates/ideco-local.crt
-if command -v update-ca-certificates >/dev/null 2>&1; then
+CERT=ideco-local.crt
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+echo {shlex.quote(b64)} | base64 -d > "$TMP"
+if [[ ! -s "$TMP" ]]; then
+  echo 'Пустой сертификат после base64' >&2
+  exit 1
+fi
+if [[ -d /etc/pki/ca-trust/source/anchors ]]; then
+  install -m 0644 "$TMP" "/etc/pki/ca-trust/source/anchors/$CERT"
+  update-ca-trust
+elif command -v update-ca-certificates >/dev/null 2>&1; then
+  install -m 0644 "$TMP" "/usr/local/share/ca-certificates/$CERT"
   update-ca-certificates
 elif command -v update-ca-trust >/dev/null 2>&1; then
-  update-ca-trust extract >/dev/null 2>&1 || update-ca-trust
+  mkdir -p /etc/pki/ca-trust/source/anchors
+  install -m 0644 "$TMP" "/etc/pki/ca-trust/source/anchors/$CERT"
+  update-ca-trust
 else
-  echo 'Нет update-ca-certificates / update-ca-trust' >&2
+  echo 'Нет /etc/pki/ca-trust/source/anchors, update-ca-trust и update-ca-certificates' >&2
   exit 1
 fi
 """
