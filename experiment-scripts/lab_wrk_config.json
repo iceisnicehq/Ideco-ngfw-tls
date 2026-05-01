@@ -51,7 +51,7 @@
   "ngfw": {
     "ssh_host": "10.0.10.1",
     "ssh_user": "admin",
-    "ssh_identity_file": "~/.ssh/id_ed25519",
+    "ssh_identity_file": "~/.ssh/id_rsa",
     "mpstat_seconds": 180,
     "mpstat_cmd": "mpstat 1 180",
     "remote_log_dir": "/tmp/lab_mpstat"
