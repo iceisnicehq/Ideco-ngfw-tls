@@ -4,6 +4,7 @@
 openssl s_server + tc на ideco.local, mpstat на NGFW.
 
 Конфиг: lab_wrk_config.json. Вход по паролю (sshpass) или по ключу **`ssh_identity_file`**.
+Опционально **`load.install_hey_if_missing`: true** — перед нагрузкой на клиентах выполнить **`apt-get install -y hey`** или **`dnf install -y hey`**, если **`hey`** не найден в PATH.
 Для Ideco NGFW обычно только ключ: пароль `admin` часто отключён.
 
 При любой ошибке SSH/SCP/hey/tshark скрипт завершается с ненулевым кодом.
@@ -105,6 +106,27 @@ def scp_from(
         )
     else:
         subprocess.run(base, check=True)
+
+
+def _remote_hey_with_optional_install(hey_line: str, hey_bin_shell: str, install_if_missing: bool) -> str:
+    """hey_bin_shell — то же имя/путь, что в hey_line (один shlex.quote)."""
+    if not install_if_missing:
+        return f"set -euo pipefail; {hey_line}"
+    return f"""set -euo pipefail
+if ! command -v {hey_bin_shell} >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y hey
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y hey
+  else
+    echo 'hey не в PATH и нет apt-get/dnf — установите hey или load.install_hey_if_missing=false и hey_bin' >&2
+    exit 1
+  fi
+fi
+{hey_line}
+"""
 
 
 def run_remote_script(
@@ -349,6 +371,8 @@ rm -f {shlex.quote(pcap_rel)}
 nohup tcpdump -i {shlex.quote(iface)} -U -w {shlex.quote(pcap_rel)} port 443 > /tmp/tcpdump_{cid}.log 2>&1 &
 echo $! > /tmp/tcpdump_{cid}.pid
 """
+        default_hey = str((cfg.get("load") or {}).get("hey_bin") or "hey")
+        hey_bin_c = str(c.get("hey_bin") or default_hey)
         clients_data.append(
             {
                 "id": cid,
@@ -357,6 +381,7 @@ echo $! > /tmp/tcpdump_{cid}.pid
                 "pw": pw,
                 "key_opts": key_opts,
                 "cip": cip,
+                "hey_bin": hey_bin_c,
                 "dump_start": dump_start,
                 "pcap_rel": pcap_rel,
             }
@@ -379,14 +404,20 @@ echo $! > /tmp/tcpdump_{cid}.pid
     if tool == "hey":
         req = int(load.get("requests_per_client", 100))
         conc = int(load.get("concurrency", 10))
-        hey_bin = str(load.get("hey_bin") or "hey")
         ex_args = load.get("extra_args") or ["-disable-keepalive"]
         ex_s = " ".join(shlex.quote(a) for a in ex_args)
-        hey_line = f"{shlex.quote(hey_bin)} -n {req} -c {conc} {ex_s} {shlex.quote(target_url)}"
+        install_hey = bool(load.get("install_hey_if_missing", False))
 
         procs: list[subprocess.Popen[bytes]] = []
         for cd in clients_data:
-            remote = f"set -euo pipefail; {hey_line}"
+            hey_bin_q = shlex.quote(cd["hey_bin"])
+            hey_line = (
+                f"{hey_bin_q} -n {req} -c {conc} "
+                f"{ex_s} {shlex.quote(target_url)}"
+            )
+            remote = _remote_hey_with_optional_install(
+                hey_line, hey_bin_q, install_hey
+            )
             target = f"{cd['user']}@{cd['host']}"
             if cd["pw"] is not None:
                 cmd = [
@@ -409,7 +440,11 @@ echo $! > /tmp/tcpdump_{cid}.pid
 
         rc_ls = [p.wait() for p in procs]
         if any(rc != 0 for rc in rc_ls):
-            raise RuntimeError(f"hey на одном из клиентов завершился с кодом: {rc_ls}")
+            detail = ", ".join(f"{cd['id']}={rc}" for cd, rc in zip(clients_data, rc_ls))
+            raise RuntimeError(
+                f"hey на клиентах завершился с кодами [{detail}] "
+                f"(127 обычно: нет бинарника в PATH при ssh; см. hey_bin в load или у клиента)."
+            )
 
     elif tool == "wrk":
         dur = int(wrk_fb.get("duration_sec") or 60)
