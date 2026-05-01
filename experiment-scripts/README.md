@@ -99,17 +99,44 @@ python3 orchestrate_remote.py --dry-run
 
 ## Анализ и графики (`analyze_tls_results.py`)
 
-Объединяет один или несколько CSV и строит сводную таблицу + boxplot.
+Объединяет один или несколько CSV и строит сводную таблицу + столбчатые диаграммы (среднее по режимам A–D для каждой цепочки).
 
 ```bash
 python3 analyze_tls_results.py ../runs/*.csv --output-dir ../figures --summary summary.csv
 ```
 
+Рядом с `summary.csv` при этом записывается **`summary.json`** (тот же набор строк; для `--from-summary` удобнее один файл). Отключить JSON: **`--no-summary-json`**.
+
+Только графики из уже готовой сводки (runs не читаются; каталог вывода по умолчанию — тот же, что у файла сводки):
+
+```bash
+python3 analyze_tls_results.py --from-summary ../figures/summary.json
+# или
+python3 analyze_tls_results.py --from-summary ../figures/summary.csv
+```
+
+Чтобы PNG ушли в другой каталог, задайте **`--output-dir`**.
+
 Результат:
 
 - `figures/summary.csv` — по группам `chain`, `compression`, `delay_ms`: count, mean, median, std, p95  
-- `figures/boxplot_by_scenario.png` — все комбинации меток  
-- `figures/boxplot_by_delay.png` — если есть несколько значений `delay_ms`
+- `figures/summary.json` — те же данные (после прогона из runs; опционально исходник для `--from-summary`)
+- `figures/tls_handshake_chain_small.png`, `tls_handshake_chain_medium.png`, `tls_handshake_chain_large.png` — по одному графику на цепочку; заголовок вида «Среднее время TLS-рукопожатия для … цепочки сертификатов»; столбцы A–D своими цветами
+- `figures/modes_legend.txt` — расшифровка режимов A–D (сжатие, tc netem); флаг `--modes-legend ''` отключает создание файла
+
+## Лаборатория hey/wrk + tshark + mpstat (ideco.local)
+
+См. **[LAB-ideco-wrk-tshark.md](LAB-ideco-wrk-tshark.md)** — **100 ms** netem на сервере, **100 запросов на клиента** через **hey**, доверие к самоподписанному leaf, строгий выход по ошибкам.
+
+- Конфиг: **`lab_wrk_config.json`** (лежит в каталоге скриптов, по умолчанию подставляется без `-c`).
+- Оркестратор: `orchestrate_lab_wrk.py`; разбор pcap: `handshake_from_pcap.py`.
+- Сервер: `lab_setup_server_certs.sh`; опционально wrk + `wrk_close.lua` при `load.tool` = `wrk`.
+
+```bash
+cd experiment-scripts
+python3 orchestrate_lab_wrk.py
+python3 analyze_tls_results.py ../results/lab_wrk/handshakes_all.csv --output-dir ../figures
+```
 
 ## Полная матрица (12 файлов × 250 строк)
 

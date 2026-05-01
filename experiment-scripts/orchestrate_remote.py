@@ -248,7 +248,12 @@ def main() -> int:
     log(f"VPS SSH: {vps_host}", quiet)
     log(f"HTTPS URL (curl): {url}", quiet)
     log(f"Каталог результатов: {out_dir.resolve()}", quiet)
-    log(f"Цепочки: {chains} | прогонов на фазу: {runs} | sleep между curl: {sleep_ms} мс", quiet)
+    n_phases = len(chains) * len(PHASES)
+    log(
+        f"Цепочки: {chains} | всего фаз (цепочка × A–D): {n_phases} "
+        f"| прогонов curl на фазу: {runs} | sleep между curl: {sleep_ms} мс",
+        quiet,
+    )
     if run_trace:
         log(f"Ideco SSH (trace): {ideco_host}", quiet)
     else:

@@ -1,0 +1,83 @@
+{
+  "ssh_extra_args": [
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null"
+  ],
+  "distribute_trusted_leaf": true,
+  "clients": [
+    {
+      "id": "c10",
+      "ssh_host": "10.0.10.10",
+      "ssh_user": "root",
+      "ssh_password": "toor",
+      "client_ip": "10.0.10.10",
+      "iface": "enp0s3"
+    },
+    {
+      "id": "c20",
+      "ssh_host": "10.0.10.20",
+      "ssh_user": "root",
+      "ssh_password": "toor",
+      "client_ip": "10.0.10.20",
+      "iface": "enp0s3"
+    },
+    {
+      "id": "c30",
+      "ssh_host": "10.0.10.30",
+      "ssh_user": "root",
+      "ssh_password": "toor",
+      "client_ip": "10.0.10.30",
+      "iface": "enp0s3"
+    }
+  ],
+  "server": {
+    "ssh_host": "192.168.1.181",
+    "ssh_user": "root",
+    "ssh_password": "toor",
+    "iface": "enp0s3",
+    "openssl_bin": "openssl",
+    "ld_library_path": "",
+    "cert_dir": "/opt/lab-tls",
+    "leaf_cert": "leaf.crt",
+    "leaf_key": "leaf.key",
+    "s_server_extra_args": ["-no_ticket"],
+    "cert_comp_zlib_flag": "-cert_comp zlib"
+  },
+  "chain_remote_paths": {
+    "small": "/opt/lab-tls/chains/small.pem",
+    "medium": "/opt/lab-tls/chains/medium.pem",
+    "large": "/opt/lab-tls/chains/large.pem"
+  },
+  "ngfw": {
+    "ssh_host": "10.0.10.1",
+    "ssh_user": "admin",
+    "ssh_password": "P@ssw0rdP@ssw0rd",
+    "mpstat_seconds": 180,
+    "mpstat_cmd": "mpstat 1 180",
+    "remote_log_dir": "/tmp/lab_mpstat"
+  },
+  "target_url": "https://ideco.local/",
+  "load": {
+    "tool": "hey",
+    "hey_bin": "hey",
+    "requests_per_client": 100,
+    "concurrency": 10,
+    "extra_args": ["-disable-keepalive"]
+  },
+  "wrk_fallback": {
+    "url": "https://ideco.local/",
+    "threads": 4,
+    "connections": 50,
+    "duration_sec": 60,
+    "lua_script": "wrk_close.lua"
+  },
+  "phases": {
+    "chains": ["small", "medium", "large"],
+    "compressions": ["off", "zlib"],
+    "delay_ms": [0, 100]
+  },
+  "results_dir": "../results/lab_wrk",
+  "remote_pcap_dir": "/tmp/lab_wrk_pcap",
+  "sync_sleep_sec": 2,
+  "post_load_grace_sec": 3
+}

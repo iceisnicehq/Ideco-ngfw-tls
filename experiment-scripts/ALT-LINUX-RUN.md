@@ -82,8 +82,14 @@ ssh -o BatchMode=yes admin@10.0.10.1 'echo OK_ideco'
 
 - **`vps_ssh`** — куда заходить для управления `openssl s_server` и `tc` (часто это тот же VPS, что обслуживает ваш тестовый HTTPS).
 - **`https_url`** — URL для curl с ALT (трафик должен идти через Ideco к вашему серверу, как в методике).
-- **`chains_to_run`** — например `["small"]` или `["small","medium","large"]`.
+- **`chains_to_run`** — какие уровни цепочки прогонять подряд:
+  - **`["small"]`** — только малая цепочка (4 фазы A–D); быстрый прогон.
+  - **`["small", "medium", "large"]`** — полная матрица по размеру цепочки на один запуск (12 фаз: 3 цепочки × 4 режима). На VPS должны существовать **`extra_small.crt`**, **`extra_medium.crt`**, **`extra_large.crt`** (как в методике).
 - **`run_ideco_trace`** — `false`, если на Ideco нет нормального `openssl` в SSH-сессии.
+
+Если вы уже один раз успешно отработали только **`small`**, это не баг: скрипт делает ровно то, что перечислено в **`chains_to_run`**. Чтобы добавить **medium** и **large**, впишите их в массив (или используйте актуальный **`remote_config.json`** из репозитория со всеми тремя).
+
+Оценка времени: один уровень цепочки ≈ 4 фазы × (trace + 100 curl + teardown) — по вашим логам порядка нескольких минут на цепочку; три цепочки ≈ в три раза дольше одной.
 
 ---
 
@@ -118,10 +124,31 @@ python3 orchestrate_remote.py -c remote_config.json --dry-run
 
 ## 6. После замеров — анализ
 
+Обязательно передать **список CSV** (удобнее всего шаблон `*.csv`). Параметр **`--summary`** — только имя файла сводки внутри **`--output-dir`** (не полный путь).
+
+Из каталога `experiment-scripts`:
+
 ```bash
 cd ~/Ideco-NGFW-tls/experiment-scripts
-python3 analyze_tls_results.py ../runs/*.csv --output-dir ../figures --summary ../figures/summary.csv
+mkdir -p ../figures
+python3 analyze_tls_results.py ../runs/*.csv --output-dir ../figures --summary summary.csv
 ```
+
+Из корня проекта (рядом с каталогом `runs/`):
+
+```bash
+cd ~/Ideco-NGFW-tls
+mkdir -p figures
+python3 experiment-scripts/analyze_tls_results.py runs/*.csv --output-dir figures --summary summary.csv
+```
+
+Повторно только графики из **`figures/summary.json`** (или `.csv`), без чтения `runs/`:
+
+```bash
+python3 experiment-scripts/analyze_tls_results.py --from-summary figures/summary.json
+```
+
+Результат при первом прогоне из CSV: **`figures/summary.csv`** и **`figures/summary.json`**, три PNG **`tls_handshake_chain_*.png`**, файл **`modes_legend.txt`** с расшифровкой режимов A–D.
 
 ---
 

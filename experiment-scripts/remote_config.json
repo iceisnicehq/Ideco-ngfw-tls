@@ -29,6 +29,6 @@
     }
   },
 
-  "chains_to_run": ["small"],
+  "chains_to_run": ["small", "medium", "large"],
   "dry_run": false
 }
