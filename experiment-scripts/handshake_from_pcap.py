@@ -3,8 +3,9 @@
 Извлечение длительности TLS 1.3 рукопожатия из pcap (tshark).
 
 Метрика по умолчанию: время от первого TCP SYN клиента (на порт 443) до первого
-TLS Application Data (record content type 23) от пира с ip.src != client_ip
-в том же tcp.stream. Требуется tshark (Wireshark).
+TLS Application Data (тип **23**) от сервера (**tcp.srcport == 443**) в том же
+tcp.stream. Учитываются поля **tls.record.content_type**, **ssl.record.content_type**
+и **tls.record.opaque_type** (в разных снимках заполнено разное). Требуется tshark.
 
 Выходной CSV совместим с analyze_tls_results.py (колонки chain, compression,
 delay_ms, tls_handshake_ms и пр.).
@@ -47,11 +48,23 @@ def _norm_ip(s: str) -> str:
     return x
 
 
-def _run_tshark_fields(
-    pcap: Path,
-    *,
-    appdata_field: str,
-) -> list[list[str]]:
+def _is_app_data_record(
+    tls_ct: str,
+    ssl_ct: str,
+    opaque: str,
+) -> bool:
+    """Тип 23 (Application Data) в разных версиях/слоях tshark."""
+    for raw in (tls_ct, ssl_ct, opaque):
+        v = (raw or "").strip()
+        if not v:
+            continue
+        for token in v.replace(",", " ").split():
+            if token == "23":
+                return True
+    return False
+
+
+def _run_tshark_fields(pcap: Path) -> list[list[str]]:
     cmd = [
         "tshark",
         "-r",
@@ -77,7 +90,11 @@ def _run_tshark_fields(
         "-e",
         "tcp.flags.ack",
         "-e",
-        appdata_field,
+        "tls.record.content_type",
+        "-e",
+        "ssl.record.content_type",
+        "-e",
+        "tls.record.opaque_type",
         "-E",
         "separator=|",
     ]
@@ -98,13 +115,11 @@ def _run_tshark_fields(
 def handshake_rows_from_tshark(
     pcap: Path,
     client_ip: str,
-    *,
-    appdata_field: str = "tls.record.content_type",
 ) -> list[tuple[int, float, float]]:
     """
     Returns list of (tcp_stream, t_syn_epoch, delta_ms).
     """
-    raw = _run_tshark_fields(pcap, appdata_field=appdata_field)
+    raw = _run_tshark_fields(pcap)
     if not raw:
         return []
 
@@ -113,8 +128,8 @@ def handshake_rows_from_tshark(
 
     cn = _norm_ip(client_ip)
     for parts in raw:
-        if len(parts) < 9:
-            parts.extend([""] * (9 - len(parts)))
+        if len(parts) < 11:
+            parts.extend([""] * (11 - len(parts)))
         try:
             t = float(parts[0])
             stream = int(parts[1])
@@ -123,7 +138,9 @@ def handshake_rows_from_tshark(
             dstport = parts[5].strip()
             syn = parts[6].strip() in ("1", "True", "true")
             ack = parts[7].strip() in ("1", "True", "true")
-            ctype = parts[8].strip()
+            ct_tls = parts[8].strip()
+            ct_ssl = parts[9].strip()
+            ct_opq = parts[10].strip()
         except (ValueError, IndexError):
             continue
 
@@ -131,7 +148,7 @@ def handshake_rows_from_tshark(
             if stream not in syn_time:
                 syn_time[stream] = t
 
-        if srcport == "443" and ip_src != cn and ctype == "23":
+        if srcport == "443" and _is_app_data_record(ct_tls, ct_ssl, ct_opq):
             if stream not in appdata_time:
                 appdata_time[stream] = t
 
@@ -145,7 +162,12 @@ def handshake_rows_from_tshark(
 
 
 def probe_appdata_field(pcap: Path) -> str:
-    for field in ("tls.record.content_type", "ssl.record.content_type"):
+    """Какой слой видит тип 23 (для --probe-only / отладки)."""
+    for field in (
+        "tls.record.content_type",
+        "ssl.record.content_type",
+        "tls.record.opaque_type",
+    ):
         r = subprocess.run(
             [
                 "tshark",
@@ -177,7 +199,7 @@ def main() -> int:
     ap.add_argument(
         "--appdata-field",
         default="",
-        help="Поле tshark для типа записи TLS (23=app data); пусто=авто",
+        help="Устарело: разбор всегда использует tls/ssl/opaque type; опция игнорируется",
     )
     ap.add_argument("-o", "--output", type=Path, required=True, help="Выходной CSV")
     ap.add_argument(
@@ -192,12 +214,12 @@ def main() -> int:
         print(f"Not found: {pcap}", file=sys.stderr)
         return 1
 
-    field = args.appdata_field.strip() or probe_appdata_field(pcap)
+    field = probe_appdata_field(pcap)
     if args.probe_only:
         print(field)
         return 0
 
-    tuples = handshake_rows_from_tshark(pcap, args.client_ip, appdata_field=field)
+    tuples = handshake_rows_from_tshark(pcap, args.client_ip)
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     with open(args.output, "w", newline="", encoding="utf-8") as f:
