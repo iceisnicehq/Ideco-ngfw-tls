@@ -3,7 +3,8 @@
 Оркестрация лаборатории: нагрузка (hey или wrk) + tcpdump на клиентах,
 openssl s_server + tc на ideco.local, mpstat на NGFW.
 
-Конфиг: lab_wrk_config.json (пароли задаются в JSON или через auth_env при его наличии).
+Конфиг: lab_wrk_config.json. Вход по паролю (sshpass) или по ключу **`ssh_identity_file`**.
+Для Ideco NGFW обычно только ключ: пароль `admin` часто отключён.
 
 При любой ошибке SSH/SCP/hey/tshark скрипт завершается с ненулевым кодом.
 """
@@ -38,39 +39,55 @@ def env_password(auth_env: str) -> str:
     return v
 
 
-def ssh_password(entity: dict[str, Any]) -> str:
+def ssh_auth(entity: dict[str, Any]) -> tuple[str | None, list[str]]:
+    """
+    (пароль для sshpass или None, доп. аргументы ssh/scp, напр. -i путь).
+    Если задан ssh_identity_file — пароль не используется.
+    """
+    key = entity.get("ssh_identity_file") or entity.get("identity_file")
+    if key:
+        p = Path(str(key)).expanduser()
+        if not p.is_file():
+            raise FileNotFoundError(f"SSH ключ не найден: {p}")
+        p = p.resolve()
+        return None, ["-i", str(p)]
     if entity.get("ssh_password") is not None:
-        return str(entity["ssh_password"])
+        return str(entity["ssh_password"]), []
     if entity.get("password") is not None:
-        return str(entity["password"])
+        return str(entity["password"]), []
     ae = entity.get("auth_env")
     if ae:
-        return env_password(str(ae))
+        return env_password(str(ae)), []
     raise RuntimeError(
-        f"Задайте ssh_password (или password / auth_env) для хоста {entity.get('ssh_host')!r}"
+        "Задайте ssh_identity_file или ssh_password (или password / auth_env) "
+        f"для хоста {entity.get('ssh_host')!r}"
     )
 
 
-def ssh_base(extra: list[str], user: str, host: str) -> list[str]:
-    return ["ssh", *extra, f"{user}@{host}"]
-
-
 def scp_to(
-    password: str,
+    password: str | None,
+    key_opts: list[str],
     extra: list[str],
     user: str,
     host: str,
     local: Path,
     remote: str,
 ) -> None:
-    env = os.environ.copy()
-    env["SSHPASS"] = password
-    cmd = ["sshpass", "-e", "scp", *extra, str(local), f"{user}@{host}:{remote}"]
-    subprocess.run(cmd, env=env, check=True)
+    dest = f"{user}@{host}:{remote}"
+    base = ["scp", *extra, *key_opts, str(local), dest]
+    if password is not None:
+        subprocess.run(
+            ["sshpass", "-e", *base],
+            env={**os.environ, "SSHPASS": password},
+            check=True,
+        )
+    else:
+        subprocess.run(base, check=True)
 
 
 def scp_from(
-    password: str,
+    password: str | None,
+    key_opts: list[str],
     extra: list[str],
     user: str,
     host: str,
@@ -78,46 +95,55 @@ def scp_from(
     local: Path,
 ) -> None:
     local.parent.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env["SSHPASS"] = password
-    cmd = ["sshpass", "-e", "scp", *extra, f"{user}@{host}:{remote}", str(local)]
-    subprocess.run(cmd, env=env, check=True)
+    dest = f"{user}@{host}:{remote}"
+    base = ["scp", *extra, *key_opts, dest, str(local)]
+    if password is not None:
+        subprocess.run(
+            ["sshpass", "-e", *base],
+            env={**os.environ, "SSHPASS": password},
+            check=True,
+        )
+    else:
+        subprocess.run(base, check=True)
 
 
 def run_remote_script(
     *,
     user: str,
     host: str,
-    password: str,
+    password: str | None,
+    key_opts: list[str],
     ssh_extra: list[str],
     script: str,
     label: str,
 ) -> None:
-    env = os.environ.copy()
-    env["SSHPASS"] = password
-    cmd = ["sshpass", "-e", *ssh_base(ssh_extra, user, host), "bash", "-s"]
-    log(f"{label}: ssh {user}@{host} bash -s ({len(script)} bytes)")
-    r = subprocess.run(cmd, input=script.encode(), env=env, check=True)
+    target = f"{user}@{host}"
+    if password is not None:
+        cmd = ["sshpass", "-e", "ssh", *ssh_extra, *key_opts, target, "bash", "-s"]
+        env = {**os.environ, "SSHPASS": password}
+    else:
+        cmd = ["ssh", *ssh_extra, *key_opts, target, "bash", "-s"]
+        env = os.environ.copy()
+    log(f"{label}: ssh {target} bash -s ({len(script)} bytes)")
+    subprocess.run(cmd, input=script.encode(), env=env, check=True)
 
 
 def install_trusted_leaf_on_clients(cfg: dict[str, Any], ssh_ex: list[str]) -> None:
     if not cfg.get("distribute_trusted_leaf", False):
         return
     srv = cfg["server"]
-    spw = ssh_password(srv)
+    spw, sk = ssh_auth(srv)
     cert_dir = str(srv["cert_dir"]).rstrip("/")
     leaf_name = str(srv["leaf_cert"])
     remote_leaf = f"{cert_dir}/{leaf_name}"
 
-    env_srv = os.environ.copy()
-    env_srv["SSHPASS"] = spw
-    cat_cmd = [
-        "sshpass",
-        "-e",
-        *ssh_base(ssh_ex, str(srv["ssh_user"]), str(srv["ssh_host"])),
-        "cat",
-        remote_leaf,
-    ]
+    target = f"{srv['ssh_user']}@{srv['ssh_host']}"
+    if spw is not None:
+        cat_cmd = ["sshpass", "-e", "ssh", *ssh_ex, *sk, target, "cat", remote_leaf]
+        env_srv = {**os.environ, "SSHPASS": spw}
+    else:
+        cat_cmd = ["ssh", *ssh_ex, *sk, target, "cat", remote_leaf]
+        env_srv = os.environ.copy()
     log("[trust] fetch leaf.crt с сервера")
     r = subprocess.run(cat_cmd, env=env_srv, capture_output=True, check=True)
     pem_bytes = r.stdout
@@ -125,9 +151,7 @@ def install_trusted_leaf_on_clients(cfg: dict[str, Any], ssh_ex: list[str]) -> N
         raise RuntimeError("[trust] пустой leaf с сервера — проверьте пути и сертификат")
 
     for c in cfg["clients"]:
-        cpw = ssh_password(c)
-        env_c = os.environ.copy()
-        env_c["SSHPASS"] = cpw
+        cpw, ck = ssh_auth(c)
         b64 = base64.b64encode(pem_bytes).decode("ascii")
         install_script = f"""set -euo pipefail
 umask 022
@@ -141,10 +165,16 @@ else
   exit 1
 fi
 """
-        cmd = ["sshpass", "-e", *ssh_base(ssh_ex, str(c["ssh_user"]), str(c["ssh_host"])), "bash", "-s"]
+        ct = f"{c['ssh_user']}@{c['ssh_host']}"
         label = f"[trust] install CA on {c['id']}"
         log(label)
-        subprocess.run(cmd, input=install_script.encode(), env=env_c, check=True)
+        if cpw is not None:
+            cmd = ["sshpass", "-e", "ssh", *ssh_ex, *ck, ct, "bash", "-s"]
+            env_c = {**os.environ, "SSHPASS": cpw}
+            subprocess.run(cmd, input=install_script.encode(), env=env_c, check=True)
+        else:
+            cmd = ["ssh", *ssh_ex, *ck, ct, "bash", "-s"]
+            subprocess.run(cmd, input=install_script.encode(), check=True)
 
 
 def phase_id(chain: str, compression: str, delay_ms: int) -> str:
@@ -236,17 +266,22 @@ def run_phase(
         print(srv_script)
         return
 
+    spw, sk = ssh_auth(srv)
     run_remote_script(
         user=str(srv["ssh_user"]),
         host=str(srv["ssh_host"]),
-        password=ssh_password(srv),
+        password=spw,
+        key_opts=sk,
         ssh_extra=ssh_ex,
         script=srv_script,
         label="server",
     )
 
     ng = cfg.get("ngfw") or {}
+    ng_pw: str | None = None
+    ng_key: list[str] = []
     if ng.get("ssh_host"):
+        ng_pw, ng_key = ssh_auth(ng)
         remote_mp = f"{ng.get('remote_log_dir', '/tmp/lab_mpstat').rstrip('/')}/{pid}.log"
         mpstat_sec = int(ng.get("mpstat_seconds") or 180)
         mp_cmd = (ng.get("mpstat_cmd") or "").strip() or f"mpstat 1 {mpstat_sec}"
@@ -258,7 +293,8 @@ echo started mpstat -> {remote_mp}
         run_remote_script(
             user=str(ng["ssh_user"]),
             host=str(ng["ssh_host"]),
-            password=ssh_password(ng),
+            password=ng_pw,
+            key_opts=ng_key,
             ssh_extra=ssh_ex,
             script=mp_script,
             label="ngfw mpstat",
@@ -274,7 +310,7 @@ echo started mpstat -> {remote_mp}
         cid = str(c["id"])
         host = str(c["ssh_host"])
         user = str(c["ssh_user"])
-        pw = ssh_password(c)
+        pw, key_opts = ssh_auth(c)
         cip = str(c["client_ip"])
         iface = str(c.get("iface") or "enp0s3")
         pcap_rel = f"{remote_base}/{pid}_{cid}.pcap"
@@ -282,7 +318,7 @@ echo started mpstat -> {remote_mp}
         if tool == "wrk":
             if not lua_local.is_file():
                 raise FileNotFoundError(f"Lua для wrk не найдена: {lua_local}")
-            scp_to(pw, ssh_ex, user, host, lua_local, remote_lua)
+            scp_to(pw, key_opts, ssh_ex, user, host, lua_local, remote_lua)
 
         dump_start = f"""set -euo pipefail
 mkdir -p {shlex.quote(remote_base)}
@@ -296,6 +332,7 @@ echo $! > /tmp/tcpdump_{cid}.pid
                 "host": host,
                 "user": user,
                 "pw": pw,
+                "key_opts": key_opts,
                 "cip": cip,
                 "dump_start": dump_start,
                 "pcap_rel": pcap_rel,
@@ -307,6 +344,7 @@ echo $! > /tmp/tcpdump_{cid}.pid
             user=cd["user"],
             host=cd["host"],
             password=cd["pw"],
+            key_opts=cd["key_opts"],
             ssh_extra=ssh_ex,
             script=cd["dump_start"],
             label=f"tcpdump start {cd['id']}",
@@ -325,17 +363,24 @@ echo $! > /tmp/tcpdump_{cid}.pid
 
         procs: list[subprocess.Popen[bytes]] = []
         for cd in clients_data:
-            env = os.environ.copy()
-            env["SSHPASS"] = cd["pw"]
             remote = f"set -euo pipefail; {hey_line}"
-            cmd = [
-                "sshpass",
-                "-e",
-                *ssh_base(ssh_ex, cd["user"], cd["host"]),
-                "bash",
-                "-lc",
-                remote,
-            ]
+            target = f"{cd['user']}@{cd['host']}"
+            if cd["pw"] is not None:
+                cmd = [
+                    "sshpass",
+                    "-e",
+                    "ssh",
+                    *ssh_ex,
+                    *cd["key_opts"],
+                    target,
+                    "bash",
+                    "-lc",
+                    remote,
+                ]
+                env = {**os.environ, "SSHPASS": cd["pw"]}
+            else:
+                cmd = ["ssh", *ssh_ex, *cd["key_opts"], target, "bash", "-lc", remote]
+                env = os.environ.copy()
             log(f"hey start {cd['id']}: {hey_line}")
             procs.append(subprocess.Popen(cmd, env=env))
 
@@ -349,22 +394,31 @@ echo $! > /tmp/tcpdump_{cid}.pid
         wrk_c = int(wrk_fb.get("connections") or 50)
         procs = []
         for cd in clients_data:
-            env = os.environ.copy()
-            env["SSHPASS"] = cd["pw"]
             remote = (
                 f"set -euo pipefail; wrk -t{wrk_t} -c{wrk_c} -d{dur}s "
                 f"-s {shlex.quote(remote_lua)} {shlex.quote(target_url)}"
             )
-            cmd = [
-                "sshpass",
-                "-e",
-                *ssh_base(ssh_ex, cd["user"], cd["host"]),
-                "bash",
-                "-lc",
-                remote,
-            ]
+            target = f"{cd['user']}@{cd['host']}"
+            if cd["pw"] is not None:
+                cmd = [
+                    "sshpass",
+                    "-e",
+                    "ssh",
+                    *ssh_ex,
+                    *cd["key_opts"],
+                    target,
+                    "bash",
+                    "-lc",
+                    remote,
+                ]
+                env = {**os.environ, "SSHPASS": cd["pw"]}
+            else:
+                cmd = ["ssh", *ssh_ex, *cd["key_opts"], target, "bash", "-lc", remote]
+                env = os.environ.copy()
             log(f"wrk start {cd['id']}")
-            procs.append(subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            procs.append(
+                subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            )
         rc_ls = [p.wait() for p in procs]
         if any(rc != 0 for rc in rc_ls):
             raise RuntimeError(f"wrk на одном из клиентов завершился с кодом: {rc_ls}")
@@ -383,6 +437,7 @@ sleep 1
             user=cd["user"],
             host=cd["host"],
             password=cd["pw"],
+            key_opts=cd["key_opts"],
             ssh_extra=ssh_ex,
             script=cleanup_tpl.replace("{cid}", cd["id"]),
             label=f"tcpdump stop {cd['id']}",
@@ -390,14 +445,23 @@ sleep 1
 
     for cd in clients_data:
         local_p = phase_dir / f"{cd['id']}.pcap"
-        scp_from(cd["pw"], ssh_ex, cd["user"], cd["host"], cd["pcap_rel"], local_p)
+        scp_from(
+            cd["pw"],
+            cd["key_opts"],
+            ssh_ex,
+            cd["user"],
+            cd["host"],
+            cd["pcap_rel"],
+            local_p,
+        )
         if not local_p.is_file() or local_p.stat().st_size < 24:
             raise RuntimeError(f"Некорректный или пустой pcap: {local_p}")
 
     if ng.get("ssh_host"):
         remote_mp = f"{ng.get('remote_log_dir', '/tmp/lab_mpstat').rstrip('/')}/{pid}.log"
         scp_from(
-            ssh_password(ng),
+            ng_pw,
+            ng_key,
             ssh_ex,
             str(ng["ssh_user"]),
             str(ng["ssh_host"]),
